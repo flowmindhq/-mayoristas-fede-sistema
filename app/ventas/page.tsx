@@ -25,6 +25,11 @@ interface Producto {
   nombre: string;
 }
 
+interface Item {
+  producto: string;
+  cantidad: string; // string para permitir borrar el campo
+}
+
 function formatFecha(val: any): string {
   if (!val) return '';
   const s = String(val);
@@ -55,12 +60,12 @@ async function fetchSheet(name: string) {
   return parseGviz(await res.text());
 }
 
-function parsePedidoAItems(pedido: string) {
-  if (!pedido) return [{ producto: '', cantidad: 1 }];
+function parsePedidoAItems(pedido: string): Item[] {
+  if (!pedido) return [{ producto: '', cantidad: '1' }];
   const partes = pedido.split(',').map(p => p.trim()).filter(Boolean);
   return partes.map(p => {
     const m = p.match(/^(\d+)\s+(.+)$/);
-    return m ? { producto: m[2].trim(), cantidad: parseInt(m[1]) } : { producto: p, cantidad: 1 };
+    return m ? { producto: m[2].trim(), cantidad: m[1] } : { producto: p, cantidad: '1' };
   });
 }
 
@@ -80,13 +85,13 @@ export default function VentasPage() {
     facturacion: '', ganancia: '',
     estadoPedido: 'Pendiente', vendedor: ''
   });
-  const [items, setItems] = useState([{ producto: '', cantidad: 1 }]);
+  const [items, setItems] = useState<Item[]>([{ producto: '', cantidad: '1' }]);
 
   const [editForm, setEditForm] = useState({
     fecha: '', cliente: '', numero: '', localidad: '',
     facturacion: '', ganancia: '', estadoPedido: '', vendedor: ''
   });
-  const [editItems, setEditItems] = useState([{ producto: '', cantidad: 1 }]);
+  const [editItems, setEditItems] = useState<Item[]>([{ producto: '', cantidad: '1' }]);
 
   async function cargar() {
     setLoading(true);
@@ -120,8 +125,8 @@ export default function VentasPage() {
     v.pedido.toLowerCase().includes(buscar.toLowerCase())
   );
 
-  function buildPedido(its: { producto: string; cantidad: number }[]) {
-    return its.filter(i => i.producto).map(i => `${i.cantidad} ${i.producto}`).join(', ');
+  function buildPedido(its: Item[]) {
+    return its.filter(i => i.producto).map(i => `${parseInt(i.cantidad) || 1} ${i.producto}`).join(', ');
   }
 
   async function registrarVenta(e: React.FormEvent) {
@@ -135,7 +140,7 @@ export default function VentasPage() {
         body: JSON.stringify({ ...form, pedido, tipo: 'nueva_venta' })
       });
       setShowModal(false);
-      setItems([{ producto: '', cantidad: 1 }]);
+      setItems([{ producto: '', cantidad: '1' }]);
       setForm({ fecha: new Date().toISOString().split('T')[0], cliente: '', numero: '', localidad: '', facturacion: '', ganancia: '', estadoPedido: 'Pendiente', vendedor: '' });
       setTimeout(() => cargar(), 2000);
     } catch (e) { console.error(e); }
@@ -181,7 +186,6 @@ export default function VentasPage() {
     setSaving(true);
     try {
       const pedidoNuevo = buildPedido(editItems);
-      // Normalizar decimales: reemplazar coma por punto
       const facturacion = String(editForm.facturacion).replace(',', '.');
       const ganancia = String(editForm.ganancia).replace(',', '.');
       await fetch(WH_EDITAR, {
@@ -205,18 +209,24 @@ export default function VentasPage() {
   const totalGan = ventas.reduce((s, v) => s + v.ganancia, 0);
   const pendientes = ventas.filter(v => v.estadoPedido === 'Pendiente').length;
 
-  const itemRow = (item: { producto: string; cantidad: number }, i: number, arr: any[], setArr: any) => (
+  const itemRow = (item: Item, i: number, arr: Item[], setArr: (a: Item[]) => void) => (
     <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <select className="input" value={item.producto} onChange={e => { const n = [...arr]; n[i].producto = e.target.value; setArr(n); }}>
+      <select className="input" value={item.producto} onChange={e => { const n = [...arr]; n[i] = { ...n[i], producto: e.target.value }; setArr(n); }}>
         <option value="">Elegí un producto...</option>
         {productos.map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
       </select>
-      <input className="input" type="number" min="1" value={item.cantidad}
-        onChange={e => { const n = [...arr]; n[i].cantidad = parseInt(e.target.value) || 1; setArr(n); }}
-        style={{ width: 80 }} />
+      <input
+        className="input"
+        type="number"
+        min="1"
+        value={item.cantidad}
+        onChange={e => { const n = [...arr]; n[i] = { ...n[i], cantidad: e.target.value }; setArr(n); }}
+        onBlur={e => { if (!e.target.value || parseInt(e.target.value) < 1) { const n = [...arr]; n[i] = { ...n[i], cantidad: '1' }; setArr(n); } }}
+        style={{ width: 80 }}
+      />
       {arr.length > 1 && (
         <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)', flexShrink: 0 }}
-          onClick={() => setArr(arr.filter((_: any, j: number) => j !== i))}>✕</button>
+          onClick={() => setArr(arr.filter((_: Item, j: number) => j !== i))}>✕</button>
       )}
     </div>
   );
@@ -291,7 +301,6 @@ export default function VentasPage() {
         </div>
       </div>
 
-      {/* Modal Nueva Venta */}
       {showModal && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowModal(false)}>
           <div className="modal" style={{ maxWidth: 560 }}>
@@ -310,7 +319,7 @@ export default function VentasPage() {
                     <label className="form-label">Pedido *</label>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {items.map((item, i) => itemRow(item, i, items, setItems))}
-                      <button type="button" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setItems([...items, { producto: '', cantidad: 1 }])}>+ Agregar producto</button>
+                      <button type="button" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setItems([...items, { producto: '', cantidad: '1' }])}>+ Agregar producto</button>
                     </div>
                   </div>
                   <div className="form-group"><label className="form-label">Facturación *</label><input className="input" type="number" step="0.01" placeholder="0" value={form.facturacion} onChange={e => setForm({...form, facturacion: e.target.value})} required /></div>
@@ -336,7 +345,6 @@ export default function VentasPage() {
         </div>
       )}
 
-      {/* Modal Editar Venta */}
       {showEditModal && ventaEditando && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowEditModal(false)}>
           <div className="modal" style={{ maxWidth: 560 }}>
@@ -355,7 +363,7 @@ export default function VentasPage() {
                     <label className="form-label">Pedido</label>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {editItems.map((item, i) => itemRow(item, i, editItems, setEditItems))}
-                      <button type="button" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setEditItems([...editItems, { producto: '', cantidad: 1 }])}>+ Agregar producto</button>
+                      <button type="button" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setEditItems([...editItems, { producto: '', cantidad: '1' }])}>+ Agregar producto</button>
                     </div>
                   </div>
                   <div className="form-group"><label className="form-label">Facturación</label><input className="input" type="text" value={editForm.facturacion} onChange={e => setEditForm({...editForm, facturacion: e.target.value})} /></div>
