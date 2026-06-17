@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const SHEET_ID = '187O6oQfinj-OtKwx2JYxiGxUljrF9gtVFm2m6b1we4s';
 const WH_REGISTRAR = 'https://valennn.app.n8n.cloud/webhook/registrar-venta-fede';
@@ -27,7 +27,13 @@ interface Producto {
 
 interface Item {
   producto: string;
-  cantidad: string; // string para permitir borrar el campo
+  cantidad: string;
+}
+
+interface Toast {
+  id: number;
+  msg: string;
+  type: 'ok' | 'err' | 'info';
 }
 
 function formatFecha(val: any): string {
@@ -69,6 +75,16 @@ function parsePedidoAItems(pedido: string): Item[] {
   });
 }
 
+function getHoy() { return new Date().toISOString().split('T')[0]; }
+function getSemana() {
+  const d = new Date(); d.setDate(d.getDate() - 7);
+  return d.toISOString().split('T')[0];
+}
+function getMes() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
 export default function VentasPage() {
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -78,12 +94,16 @@ export default function VentasPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [ventaEditando, setVentaEditando] = useState<Venta | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Filtros
+  const [filtroEstado, setFiltroEstado] = useState('');
+  const [filtroVendedor, setFiltroVendedor] = useState('');
+  const [filtroFecha, setFiltroFecha] = useState('');
 
   const [form, setForm] = useState({
-    fecha: new Date().toISOString().split('T')[0],
-    cliente: '', numero: '', localidad: '',
-    facturacion: '', ganancia: '',
-    estadoPedido: 'Pendiente', vendedor: ''
+    fecha: getHoy(), cliente: '', numero: '', localidad: '',
+    facturacion: '', ganancia: '', estadoPedido: 'Pendiente', vendedor: ''
   });
   const [items, setItems] = useState<Item[]>([{ producto: '', cantidad: '1' }]);
 
@@ -92,6 +112,12 @@ export default function VentasPage() {
     facturacion: '', ganancia: '', estadoPedido: '', vendedor: ''
   });
   const [editItems, setEditItems] = useState<Item[]>([{ producto: '', cantidad: '1' }]);
+
+  function toast(msg: string, type: 'ok' | 'err' | 'info' = 'info') {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  }
 
   async function cargar() {
     setLoading(true);
@@ -114,16 +140,24 @@ export default function VentasPage() {
         vendedor: r.VENDEDOR || ''
       }));
       setVentas(vs.reverse());
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); toast('Error al cargar datos', 'err'); }
     setLoading(false);
   }
 
   useEffect(() => { cargar(); }, []);
 
-  const filtradas = ventas.filter(v =>
-    !buscar || v.cliente.toLowerCase().includes(buscar.toLowerCase()) ||
-    v.pedido.toLowerCase().includes(buscar.toLowerCase())
-  );
+  // Filtrado
+  const filtradas = ventas.filter(v => {
+    if (buscar && !v.cliente.toLowerCase().includes(buscar.toLowerCase()) && !v.pedido.toLowerCase().includes(buscar.toLowerCase())) return false;
+    if (filtroEstado && v.estadoPedido !== filtroEstado) return false;
+    if (filtroVendedor && v.vendedor !== filtroVendedor) return false;
+    if (filtroFecha === 'hoy' && v.fecha !== getHoy()) return false;
+    if (filtroFecha === 'semana' && v.fecha < getSemana()) return false;
+    if (filtroFecha === 'mes' && v.fecha < getMes()) return false;
+    return true;
+  });
+
+  const hayFiltros = buscar || filtroEstado || filtroVendedor || filtroFecha;
 
   function buildPedido(its: Item[]) {
     return its.filter(i => i.producto).map(i => `${parseInt(i.cantidad) || 1} ${i.producto}`).join(', ');
@@ -134,29 +168,33 @@ export default function VentasPage() {
     setSaving(true);
     try {
       const pedido = buildPedido(items);
-      if (!pedido) { alert('Agregá al menos un producto'); setSaving(false); return; }
+      if (!pedido) { toast('Agregá al menos un producto', 'err'); setSaving(false); return; }
+      toast('Registrando venta...', 'info');
       await fetch(WH_REGISTRAR, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, pedido, tipo: 'nueva_venta' })
       });
+      toast('Venta registrada ✓', 'ok');
       setShowModal(false);
       setItems([{ producto: '', cantidad: '1' }]);
-      setForm({ fecha: new Date().toISOString().split('T')[0], cliente: '', numero: '', localidad: '', facturacion: '', ganancia: '', estadoPedido: 'Pendiente', vendedor: '' });
+      setForm({ fecha: getHoy(), cliente: '', numero: '', localidad: '', facturacion: '', ganancia: '', estadoPedido: 'Pendiente', vendedor: '' });
       setTimeout(() => cargar(), 2000);
-    } catch (e) { console.error(e); }
+    } catch (e) { toast('Error al registrar venta', 'err'); }
     setSaving(false);
   }
 
   async function eliminarVenta(v: Venta) {
     if (!confirm(`¿Eliminar venta de ${v.cliente}? El stock será devuelto automáticamente.`)) return;
+    toast('Eliminando venta...', 'info');
     try {
       await fetch(WH_ELIMINAR, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rowNum: v.rowNum, pedido: v.pedido })
       });
+      toast('Venta eliminada ✓', 'ok');
       setVentas(prev => prev.filter(x => x.rowNum !== v.rowNum));
       setTimeout(() => cargar(), 2500);
-    } catch (e) { console.error(e); }
+    } catch (e) { toast('Error al eliminar venta', 'err'); }
   }
 
   async function cambiarEstado(v: Venta, nuevoEstado: string) {
@@ -166,7 +204,8 @@ export default function VentasPage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rowNum: v.rowNum, estado: nuevoEstado })
       });
-    } catch (e) { console.error(e); }
+      toast(`Estado → ${nuevoEstado} ✓`, 'ok');
+    } catch (e) { toast('Error al cambiar estado', 'err'); }
   }
 
   function abrirEditar(v: Venta) {
@@ -184,30 +223,25 @@ export default function VentasPage() {
     e.preventDefault();
     if (!ventaEditando) return;
     setSaving(true);
+    toast('Guardando cambios...', 'info');
     try {
       const pedidoNuevo = buildPedido(editItems);
       const facturacion = String(editForm.facturacion).replace(',', '.');
       const ganancia = String(editForm.ganancia).replace(',', '.');
       await fetch(WH_EDITAR, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rowNum: ventaEditando.rowNum,
-          pedidoViejo: ventaEditando.pedido,
-          ...editForm,
-          facturacion,
-          ganancia,
-          pedido: pedidoNuevo,
-        })
+        body: JSON.stringify({ rowNum: ventaEditando.rowNum, pedidoViejo: ventaEditando.pedido, ...editForm, facturacion, ganancia, pedido: pedidoNuevo })
       });
+      toast('Venta actualizada ✓', 'ok');
       setShowEditModal(false);
       setTimeout(() => cargar(), 2000);
-    } catch (e) { console.error(e); }
+    } catch (e) { toast('Error al guardar cambios', 'err'); }
     setSaving(false);
   }
 
-  const totalFact = ventas.reduce((s, v) => s + v.facturacion, 0);
-  const totalGan = ventas.reduce((s, v) => s + v.ganancia, 0);
-  const pendientes = ventas.filter(v => v.estadoPedido === 'Pendiente').length;
+  const totalFact = filtradas.reduce((s, v) => s + v.facturacion, 0);
+  const totalGan = filtradas.reduce((s, v) => s + v.ganancia, 0);
+  const pendientes = filtradas.filter(v => v.estadoPedido === 'Pendiente').length;
 
   const itemRow = (item: Item, i: number, arr: Item[], setArr: (a: Item[]) => void) => (
     <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -215,15 +249,10 @@ export default function VentasPage() {
         <option value="">Elegí un producto...</option>
         {productos.map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
       </select>
-      <input
-        className="input"
-        type="number"
-        min="1"
-        value={item.cantidad}
+      <input className="input" type="number" min="1" value={item.cantidad}
         onChange={e => { const n = [...arr]; n[i] = { ...n[i], cantidad: e.target.value }; setArr(n); }}
         onBlur={e => { if (!e.target.value || parseInt(e.target.value) < 1) { const n = [...arr]; n[i] = { ...n[i], cantidad: '1' }; setArr(n); } }}
-        style={{ width: 80 }}
-      />
+        style={{ width: 80 }} />
       {arr.length > 1 && (
         <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)', flexShrink: 0 }}
           onClick={() => setArr(arr.filter((_: Item, j: number) => j !== i))}>✕</button>
@@ -231,12 +260,23 @@ export default function VentasPage() {
     </div>
   );
 
+  const toastColors: Record<string, string> = { ok: '#22c55e', err: '#ef4444', info: '#3b82f6' };
+
   return (
     <>
+      {/* Toasts */}
+      <div style={{ position: 'fixed', bottom: 24, right: 24, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999 }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{ background: 'var(--surface)', border: `1px solid ${toastColors[t.type]}`, borderLeft: `4px solid ${toastColors[t.type]}`, borderRadius: 8, padding: '10px 16px', fontSize: 13, fontWeight: 500, color: 'var(--text)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: 220 }}>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+
       <div className="topbar">
         <div className="topbar-title">Ventas</div>
         <div className="topbar-right">
-          <span className="topbar-badge">{ventas.length} registros</span>
+          <span className="topbar-badge">{filtradas.length} de {ventas.length}</span>
           <button className="btn btn-secondary" onClick={cargar}>↻ Actualizar</button>
           <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nueva Venta</button>
         </div>
@@ -244,18 +284,47 @@ export default function VentasPage() {
 
       <div className="page-content">
         <div className="stats-grid">
-          <div className="stat-card"><div className="stat-card-label">Total Ventas</div><div className="stat-card-value blue">{ventas.length}</div><div className="stat-card-sub">registradas</div></div>
-          <div className="stat-card"><div className="stat-card-label">Facturación</div><div className="stat-card-value green">${totalFact.toLocaleString('es-AR')}</div><div className="stat-card-sub">acumulada</div></div>
-          <div className="stat-card"><div className="stat-card-label">Ganancia</div><div className="stat-card-value green">${totalGan.toLocaleString('es-AR')}</div><div className="stat-card-sub">acumulada</div></div>
+          <div className="stat-card"><div className="stat-card-label">Total Ventas</div><div className="stat-card-value blue">{filtradas.length}</div><div className="stat-card-sub">{hayFiltros ? 'filtradas' : 'registradas'}</div></div>
+          <div className="stat-card"><div className="stat-card-label">Facturación</div><div className="stat-card-value green">${totalFact.toLocaleString('es-AR')}</div><div className="stat-card-sub">{hayFiltros ? 'filtrada' : 'acumulada'}</div></div>
+          <div className="stat-card"><div className="stat-card-label">Ganancia</div><div className="stat-card-value green">${totalGan.toLocaleString('es-AR')}</div><div className="stat-card-sub">{hayFiltros ? 'filtrada' : 'acumulada'}</div></div>
           <div className="stat-card"><div className="stat-card-label">Pendientes</div><div className="stat-card-value orange">{pendientes}</div><div className="stat-card-sub">sin despachar</div></div>
         </div>
 
         <div className="table-card">
-          <div className="table-header">
+          <div className="table-header" style={{ flexWrap: 'wrap', gap: 8 }}>
             <div className="table-title">Registro de Ventas</div>
-            <div className="search-wrapper">
-              <svg className="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-              <input className="search-input" placeholder="Buscar cliente o pedido..." value={buscar} onChange={e => setBuscar(e.target.value)} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* Buscador */}
+              <div className="search-wrapper">
+                <svg className="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input className="search-input" placeholder="Buscar cliente o pedido..." value={buscar} onChange={e => setBuscar(e.target.value)} />
+              </div>
+              {/* Filtro estado */}
+              <select className="input" style={{ width: 140, fontSize: 12 }} value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}>
+                <option value="">Todos los estados</option>
+                <option value="Pendiente">Pendiente</option>
+                <option value="Despachado">Despachado</option>
+              </select>
+              {/* Filtro vendedor */}
+              <select className="input" style={{ width: 140, fontSize: 12 }} value={filtroVendedor} onChange={e => setFiltroVendedor(e.target.value)}>
+                <option value="">Todos los vendedores</option>
+                <option value="Fede">Fede</option>
+                <option value="Valen">Valen</option>
+                <option value="Benja">Benja</option>
+              </select>
+              {/* Filtro fecha */}
+              <select className="input" style={{ width: 140, fontSize: 12 }} value={filtroFecha} onChange={e => setFiltroFecha(e.target.value)}>
+                <option value="">Todas las fechas</option>
+                <option value="hoy">Hoy</option>
+                <option value="semana">Última semana</option>
+                <option value="mes">Este mes</option>
+              </select>
+              {/* Limpiar filtros */}
+              {hayFiltros && (
+                <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => { setBuscar(''); setFiltroEstado(''); setFiltroVendedor(''); setFiltroFecha(''); }}>
+                  ✕ Limpiar
+                </button>
+              )}
             </div>
           </div>
           <div style={{ overflowX: 'auto' }}>
