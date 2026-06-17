@@ -138,7 +138,10 @@ export default function VentasPage() {
         ganancia: (() => { const v = r.GANANCIA; if (typeof v === 'number') return v; return parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0; })(),
         estadoPedido: r['ESTADO PEDIDO'] || 'Pendiente',
         vendedor: r.VENDEDOR || ''
-      }));
+      })).filter((v: any) => {
+        const c = (v.cliente || '').trim();
+        return c && !c.startsWith('---') && !c.toUpperCase().startsWith('CIERRE');
+      });
       setVentas(vs.reverse());
     } catch (e) { console.error(e); toast('Error al cargar datos', 'err'); }
     setLoading(false);
