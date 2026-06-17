@@ -138,10 +138,7 @@ export default function VentasPage() {
         ganancia: (() => { const v = r.GANANCIA; if (typeof v === 'number') return v; return parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0; })(),
         estadoPedido: r['ESTADO PEDIDO'] || 'Pendiente',
         vendedor: r.VENDEDOR || ''
-      })).filter((v: any) => {
-        const c = (v.cliente || '').trim();
-        return c && !c.startsWith('---') && !c.toUpperCase().startsWith('CIERRE');
-      });
+      }));
       setVentas(vs.reverse());
     } catch (e) { console.error(e); toast('Error al cargar datos', 'err'); }
     setLoading(false);
@@ -242,8 +239,13 @@ export default function VentasPage() {
     setSaving(false);
   }
 
-  const totalFact = filtradas.reduce((s, v) => s + v.facturacion, 0);
-  const totalGan = filtradas.reduce((s, v) => s + v.ganancia, 0);
+  const ventasSinCierres = ventas.filter(v => {
+    const c = (v.cliente || '').trim();
+    return c && !c.startsWith('---') && !c.toUpperCase().startsWith('CIERRE');
+  });
+
+  const totalFact = ventasSinCierres.filter(v => !filtroEstado || v.estadoPedido === filtroEstado).filter(v => !filtroVendedor || v.vendedor === filtroVendedor).reduce((s, v) => s + v.facturacion, 0);
+  const totalGan = ventasSinCierres.filter(v => !filtroEstado || v.estadoPedido === filtroEstado).filter(v => !filtroVendedor || v.vendedor === filtroVendedor).reduce((s, v) => s + v.ganancia, 0);
   const pendientes = filtradas.filter(v => v.estadoPedido === 'Pendiente').length;
 
   const itemRow = (item: Item, i: number, arr: Item[], setArr: (a: Item[]) => void) => (
