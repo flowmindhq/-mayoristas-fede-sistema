@@ -36,6 +36,7 @@ export default function StockPage() {
   const [loading, setLoading] = useState(true);
   const [buscar, setBuscar] = useState('');
   const [filtro, setFiltro] = useState('todos');
+  const [umbralBajo, setUmbralBajo] = useState(5);
   const [showNuevo, setShowNuevo] = useState(false);
   const [showEntrada, setShowEntrada] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -69,18 +70,18 @@ export default function StockPage() {
 
   const filtrados = productos.filter(p => {
     const matchBuscar = !buscar || p.nombre.toLowerCase().includes(buscar.toLowerCase()) || p.id.toLowerCase().includes(buscar.toLowerCase());
-    const matchFiltro = filtro === 'todos' || (filtro === 'ok' && p.stock > 5) || (filtro === 'bajo' && p.stock > 0 && p.stock <= 5) || (filtro === 'sin' && p.stock <= 0);
+    const matchFiltro = filtro === 'todos' || (filtro === 'ok' && p.stock > umbralBajo) || (filtro === 'bajo' && p.stock > 0 && p.stock <= umbralBajo) || (filtro === 'sin' && p.stock <= 0);
     return matchBuscar && matchFiltro;
   });
 
-  const sinStock = productos.filter(p => p.stock <= 0).length;
-  const stockBajo = productos.filter(p => p.stock > 0 && p.stock <= 5).length;
-  const disponibles = productos.filter(p => p.stock > 5).length;
-  const patrimonio = productos.reduce((s, p) => s + p.valorTotal, 0);
+  const sinStock = filtrados.filter(p => p.stock <= 0).length;
+  const stockBajo = filtrados.filter(p => p.stock > 0 && p.stock <= umbralBajo).length;
+  const disponibles = filtrados.filter(p => p.stock > umbralBajo).length;
+  const patrimonio = filtrados.reduce((s, p) => s + p.valorTotal, 0);
 
   function estadoBadge(stock: number) {
     if (stock <= 0) return <span className="badge badge-red">Sin Stock</span>;
-    if (stock <= 5) return <span className="badge badge-orange">Stock Bajo</span>;
+    if (stock <= umbralBajo) return <span className="badge badge-orange">Stock Bajo</span>;
     return <span className="badge badge-green">OK</span>;
   }
 
@@ -134,7 +135,7 @@ export default function StockPage() {
       <div className="topbar">
         <div className="topbar-title">Stock</div>
         <div className="topbar-right">
-          <span className="topbar-badge">{productos.length} productos</span>
+          <span className="topbar-badge">{filtrados.length} de {productos.length} productos</span>
           <button className="btn btn-secondary" onClick={cargar}>↻ Actualizar</button>
           <button className="btn btn-secondary" onClick={() => setShowEntrada(true)}>+ Registrar Entrada</button>
           <button className="btn btn-primary" onClick={() => setShowNuevo(true)}>+ Nuevo Producto</button>
@@ -145,8 +146,8 @@ export default function StockPage() {
         <div className="stats-grid">
           <div className="stat-card">
             <div className="stat-card-label">Total Productos</div>
-            <div className="stat-card-value blue">{productos.length}</div>
-            <div className="stat-card-sub">en inventario</div>
+            <div className="stat-card-value blue">{filtrados.length}</div>
+            <div className="stat-card-sub">{filtrados.length !== productos.length ? `de ${productos.length} ` : ''}en inventario</div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Sin Stock</div>
@@ -156,7 +157,7 @@ export default function StockPage() {
           <div className="stat-card">
             <div className="stat-card-label">Stock Bajo</div>
             <div className="stat-card-value orange">{stockBajo}</div>
-            <div className="stat-card-sub">≤ 5 unidades</div>
+            <div className="stat-card-sub">≤ {umbralBajo} unidades</div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Patrimonio</div>
@@ -175,6 +176,10 @@ export default function StockPage() {
                 <option value="bajo">Stock Bajo</option>
                 <option value="sin">Sin Stock</option>
               </select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <label style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Umbral bajo:</label>
+                <input className="input" type="number" min="1" style={{ width: 64 }} value={umbralBajo} onChange={e => setUmbralBajo(Math.max(1, parseInt(e.target.value) || 1))} />
+              </div>
               <div className="search-wrapper">
                 <svg className="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                 <input className="search-input" placeholder="Buscar producto..." value={buscar} onChange={e => setBuscar(e.target.value)} />
@@ -202,7 +207,7 @@ export default function StockPage() {
                 <tr key={i}>
                   <td className="td-muted" style={{ fontFamily: 'monospace', fontSize: 12 }}>{p.id}</td>
                   <td style={{ fontWeight: 600 }}>{p.nombre}</td>
-                  <td style={{ fontWeight: 700, color: p.stock <= 0 ? 'var(--danger)' : p.stock <= 5 ? 'var(--warning)' : 'var(--success)', fontSize: 16 }}>{p.stock}</td>
+                  <td style={{ fontWeight: 700, color: p.stock <= 0 ? 'var(--danger)' : p.stock <= umbralBajo ? 'var(--warning)' : 'var(--success)', fontSize: 16 }}>{p.stock}</td>
                   <td className="td-muted">${p.precio.toFixed(2)}</td>
                   <td className="td-money">${p.valorTotal.toFixed(2)}</td>
                   <td>{estadoBadge(p.stock)}</td>
