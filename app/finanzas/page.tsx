@@ -8,6 +8,15 @@ function parseNum(val: any): number {
   return parseFloat(String(val || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
 }
 
+// Fecha local en formato YYYY-MM-DD (no usar toISOString: convierte a UTC
+// y desfasa el día/mes en Argentina, sobre todo cerca de medianoche o fin de mes).
+function fechaLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 interface Cuenta {
   id: string;
   nombre: string;
@@ -51,7 +60,7 @@ export default function FinanzasPage() {
         if (errVentas) throw errVentas;
         if (errStock) throw errStock;
 
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = fechaLocal(new Date());
         const mes = hoy.slice(0, 7);
 
         const vs: VentaRow[] = (rawVentas || []).map((r: any) => ({
