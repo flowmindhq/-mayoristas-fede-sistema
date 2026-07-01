@@ -1,42 +1,11 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-
-const SHEET_ID = '187O6oQfinj-OtKwx2JYxiGxUljrF9gtVFm2m6b1we4s';
-
-function formatFecha(val: any): string {
-  if (!val) return '';
-  const s = String(val);
-  const m = s.match(/^Date\((\d+),(\d+),(\d+)\)$/);
-  if (m) {
-    const y = m[1], mo = String(parseInt(m[2]) + 1).padStart(2, '0'), d = String(m[3]).padStart(2, '0');
-    return `${y}-${mo}-${d}`;
-  }
-  return s;
-}
-
-function parseGviz(raw: string) {
-  const json = JSON.parse(raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, ''));
-  const cols = json.table.cols.map((c: any) => c.label);
-  return (json.table.rows || []).map((r: any, i: number) => {
-    const obj: any = { row_number: i + 2 };
-    r.c?.forEach((cell: any, j: number) => {
-      const raw = cell?.v ?? cell?.f ?? '';
-      obj[cols[j]] = typeof raw === 'string' && raw.startsWith('Date(') ? formatFecha(raw) : raw;
-    });
-    return obj;
-  });
-}
+import { supabase } from '@/lib/supabase';
 
 function parseNum(val: any): number {
   if (typeof val === 'number') return val;
   return parseFloat(String(val || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
-}
-
-async function fetchSheet(name: string) {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(name)}&nocache=${Date.now()}`;
-  const res = await fetch(url);
-  return parseGviz(await res.text());
 }
 
 interface Cuenta {
@@ -75,25 +44,30 @@ export default function FinanzasPage() {
     async function cargar() {
       setLoading(true);
       try {
-        const [rawVentas, rawStock] = await Promise.all([fetchSheet('VENTAS'), fetchSheet('STOCK')]);
+        const [{ data: rawVentas, error: errVentas }, { data: rawStock, error: errStock }] = await Promise.all([
+          supabase.from('ventas').select('*'),
+          supabase.from('productos').select('nombre, stock, precio_costo')
+        ]);
+        if (errVentas) throw errVentas;
+        if (errStock) throw errStock;
 
         const hoy = new Date().toISOString().split('T')[0];
         const mes = hoy.slice(0, 7);
 
-        const vs: VentaRow[] = rawVentas.map((r: any) => ({
-          fecha: r.FECHA || '',
-          facturacion: parseNum(r.FACTURACION),
-          ganancia: parseNum(r.GANANCIA),
-          estado: r['ESTADO PEDIDO'] || '',
-          cliente: (r.CLIENTE || '').trim(),
-          vendedor: (r.VENDEDOR || '').trim(),
+        const vs: VentaRow[] = (rawVentas || []).map((r: any) => ({
+          fecha: r.fecha || '',
+          facturacion: parseNum(r.facturacion),
+          ganancia: parseNum(r.ganancia),
+          estado: r.estado || '',
+          cliente: (r.cliente_nombre || '').trim(),
+          vendedor: (r.vendedor || '').trim(),
         })).filter((v: VentaRow) => v.cliente && !v.cliente.startsWith('---') && !v.cliente.toUpperCase().startsWith('CIERRE'));
 
-        const patrimonio = rawStock
-          .filter((r: any) => r.NOMBRE || r.nombre)
+        const patrimonio = (rawStock || [])
+          .filter((r: any) => r.nombre)
           .reduce((s: number, r: any) => {
-            const precio = parseNum(r['PRECIO_COSTO (USD)'] || r.PRECIO_COSTO || 0);
-            const stock = parseNum(r.STOCK || 0);
+            const precio = parseNum(r.precio_costo);
+            const stock = parseNum(r.stock);
             return s + (stock > 0 ? stock * precio : 0);
           }, 0);
 

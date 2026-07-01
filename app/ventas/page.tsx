@@ -1,14 +1,9 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
-
-const SHEET_ID = '187O6oQfinj-OtKwx2JYxiGxUljrF9gtVFm2m6b1we4s';
-const WH_REGISTRAR = 'https://valennn.app.n8n.cloud/webhook/registrar-venta-fede';
-const WH_ELIMINAR = 'https://valennn.app.n8n.cloud/webhook/eliminar-venta-fede';
-const WH_ESTADO = 'https://valennn.app.n8n.cloud/webhook/cambiar-estado-venta';
-const WH_EDITAR = 'https://valennn.app.n8n.cloud/webhook/editar-venta-fede';
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
 interface Venta {
-  rowNum: number;
+  id: number;
   fecha: string;
   cliente: string;
   numero: string;
@@ -36,36 +31,6 @@ interface Toast {
   type: 'ok' | 'err' | 'info';
 }
 
-function formatFecha(val: any): string {
-  if (!val) return '';
-  const s = String(val);
-  const m = s.match(/^Date\((\d+),(\d+),(\d+)\)$/);
-  if (m) {
-    const y = m[1], mo = String(parseInt(m[2]) + 1).padStart(2, '0'), d = String(m[3]).padStart(2, '0');
-    return `${y}-${mo}-${d}`;
-  }
-  return s;
-}
-
-function parseGviz(raw: string) {
-  const json = JSON.parse(raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, ''));
-  const cols = json.table.cols.map((c: any) => c.label);
-  return (json.table.rows || []).map((r: any, i: number) => {
-    const obj: any = { row_number: i + 2 };
-    r.c?.forEach((cell: any, j: number) => {
-      const raw = cell?.v ?? cell?.f ?? '';
-      obj[cols[j]] = typeof raw === 'string' && raw.startsWith('Date(') ? formatFecha(raw) : raw;
-    });
-    return obj;
-  });
-}
-
-async function fetchSheet(name: string) {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(name)}&nocache=${Date.now()}`;
-  const res = await fetch(url);
-  return parseGviz(await res.text());
-}
-
 function parsePedidoAItems(pedido: string): Item[] {
   if (!pedido) return [{ producto: '', cantidad: '1' }];
   const partes = pedido.split(',').map(p => p.trim()).filter(Boolean);
@@ -75,10 +40,18 @@ function parsePedidoAItems(pedido: string): Item[] {
   });
 }
 
-function getHoy() { return new Date().toISOString().split('T')[0]; }
+// Fecha local en formato YYYY-MM-DD (no usar toISOString: convierte a UTC
+// y desfasa el día/mes en Argentina, sobre todo cerca de medianoche o fin de mes).
+function fechaLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function getHoy() { return fechaLocal(new Date()); }
 function getSemana() {
   const d = new Date(); d.setDate(d.getDate() - 7);
-  return d.toISOString().split('T')[0];
+  return fechaLocal(d);
 }
 function getMes() {
   const d = new Date();
@@ -122,24 +95,28 @@ export default function VentasPage() {
   async function cargar() {
     setLoading(true);
     try {
-      const [rawVentas, rawStock] = await Promise.all([fetchSheet('VENTAS'), fetchSheet('STOCK')]);
-      const prods = rawStock
-        .filter((r: any) => r.NOMBRE || r.nombre)
-        .map((r: any) => ({ id: r.CODIGO || '', nombre: r.NOMBRE || r.nombre || '' }));
-      setProductos(prods);
-      const vs = rawVentas.map((r: any) => ({
-        rowNum: r.row_number,
-        fecha: r.FECHA || '',
-        cliente: r.CLIENTE || '',
-        numero: r.NUMERO || '',
-        localidad: r.LOCALIDAD || '',
-        pedido: r.PEDIDO || '',
-        facturacion: (() => { const v = r.FACTURACION; if (typeof v === 'number') return v; return parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0; })(),
-        ganancia: (() => { const v = r.GANANCIA; if (typeof v === 'number') return v; return parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0; })(),
-        estadoPedido: r['ESTADO PEDIDO'] || 'Pendiente',
-        vendedor: r.VENDEDOR || ''
+      const [{ data: rawVentas, error: errVentas }, { data: rawProductos, error: errProductos }] = await Promise.all([
+        supabase.from('ventas').select('*').order('fecha', { ascending: false }).order('id', { ascending: false }),
+        supabase.from('productos').select('codigo, nombre').order('nombre', { ascending: true })
+      ]);
+      if (errVentas) throw errVentas;
+      if (errProductos) throw errProductos;
+
+      setProductos((rawProductos || []).map((p: any) => ({ id: p.codigo || '', nombre: p.nombre || '' })));
+
+      const vs: Venta[] = (rawVentas || []).map((r: any) => ({
+        id: r.id,
+        fecha: r.fecha || '',
+        cliente: r.cliente_nombre || '',
+        numero: r.cliente_numero || '',
+        localidad: r.localidad || '',
+        pedido: r.pedido || '',
+        facturacion: Number(r.facturacion) || 0,
+        ganancia: Number(r.ganancia) || 0,
+        estadoPedido: r.estado || 'Pendiente',
+        vendedor: r.vendedor || ''
       }));
-      setVentas(vs.reverse());
+      setVentas(vs);
     } catch (e) { console.error(e); toast('Error al cargar datos', 'err'); }
     setLoading(false);
   }
@@ -170,15 +147,26 @@ export default function VentasPage() {
       const pedido = buildPedido(items);
       if (!pedido) { toast('Agregá al menos un producto', 'err'); setSaving(false); return; }
       toast('Registrando venta...', 'info');
-      await fetch(WH_REGISTRAR, {
+      const res = await fetch('/api/ventas', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, pedido, tipo: 'nueva_venta' })
+        body: JSON.stringify({
+          fecha: form.fecha,
+          cliente_nombre: form.cliente,
+          cliente_numero: form.numero,
+          localidad: form.localidad,
+          pedido,
+          facturacion: parseFloat(form.facturacion) || 0,
+          ganancia: parseFloat(form.ganancia) || 0,
+          estado: form.estadoPedido,
+          vendedor: form.vendedor
+        })
       });
+      if (!res.ok) throw new Error((await res.json()).error || 'Error al registrar venta');
       toast('Venta registrada ✓', 'ok');
       setShowModal(false);
       setItems([{ producto: '', cantidad: '1' }]);
       setForm({ fecha: getHoy(), cliente: '', numero: '', localidad: '', facturacion: '', ganancia: '', estadoPedido: 'Pendiente', vendedor: '' });
-      setTimeout(() => cargar(), 2000);
+      cargar();
     } catch (e) { toast('Error al registrar venta', 'err'); }
     setSaving(false);
   }
@@ -187,23 +175,21 @@ export default function VentasPage() {
     if (!confirm(`¿Eliminar venta de ${v.cliente}? El stock será devuelto automáticamente.`)) return;
     toast('Eliminando venta...', 'info');
     try {
-      await fetch(WH_ELIMINAR, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rowNum: v.rowNum, pedido: v.pedido })
-      });
+      const res = await fetch(`/api/ventas/${v.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error || 'Error al eliminar venta');
       toast('Venta eliminada ✓', 'ok');
-      setVentas(prev => prev.filter(x => x.rowNum !== v.rowNum));
-      setTimeout(() => cargar(), 2500);
+      setVentas(prev => prev.filter(x => x.id !== v.id));
     } catch (e) { toast('Error al eliminar venta', 'err'); }
   }
 
   async function cambiarEstado(v: Venta, nuevoEstado: string) {
-    setVentas(prev => prev.map(x => x.rowNum === v.rowNum ? { ...x, estadoPedido: nuevoEstado } : x));
+    setVentas(prev => prev.map(x => x.id === v.id ? { ...x, estadoPedido: nuevoEstado } : x));
     try {
-      await fetch(WH_ESTADO, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rowNum: v.rowNum, estado: nuevoEstado })
+      const res = await fetch(`/api/ventas/${v.id}/estado`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: nuevoEstado })
       });
+      if (!res.ok) throw new Error((await res.json()).error || 'Error al cambiar estado');
       toast(`Estado → ${nuevoEstado} ✓`, 'ok');
     } catch (e) { toast('Error al cambiar estado', 'err'); }
   }
@@ -226,15 +212,26 @@ export default function VentasPage() {
     toast('Guardando cambios...', 'info');
     try {
       const pedidoNuevo = buildPedido(editItems);
-      const facturacion = String(editForm.facturacion).replace(',', '.');
-      const ganancia = String(editForm.ganancia).replace(',', '.');
-      await fetch(WH_EDITAR, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rowNum: ventaEditando.rowNum, pedidoViejo: ventaEditando.pedido, ...editForm, facturacion, ganancia, pedido: pedidoNuevo })
+      const facturacion = parseFloat(String(editForm.facturacion).replace(',', '.')) || 0;
+      const ganancia = parseFloat(String(editForm.ganancia).replace(',', '.')) || 0;
+      const res = await fetch(`/api/ventas/${ventaEditando.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fecha: editForm.fecha,
+          cliente_nombre: editForm.cliente,
+          cliente_numero: editForm.numero,
+          localidad: editForm.localidad,
+          pedido: pedidoNuevo,
+          facturacion,
+          ganancia,
+          estado: editForm.estadoPedido,
+          vendedor: editForm.vendedor
+        })
       });
+      if (!res.ok) throw new Error((await res.json()).error || 'Error al guardar cambios');
       toast('Venta actualizada ✓', 'ok');
       setShowEditModal(false);
-      setTimeout(() => cargar(), 2000);
+      cargar();
     } catch (e) { toast('Error al guardar cambios', 'err'); }
     setSaving(false);
   }

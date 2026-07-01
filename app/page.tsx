@@ -2,42 +2,20 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-
-const SHEET_ID = '187O6oQfinj-OtKwx2JYxiGxUljrF9gtVFm2m6b1we4s';
-
-function formatFecha(val: any): string {
-  if (!val) return '';
-  const s = String(val);
-  const m = s.match(/^Date\((\d+),(\d+),(\d+)\)$/);
-  if (m) {
-    const y = m[1], mo = String(parseInt(m[2]) + 1).padStart(2, '0'), d = String(m[3]).padStart(2, '0');
-    return `${y}-${mo}-${d}`;
-  }
-  return s;
-}
-
-function parseGviz(raw: string) {
-  const json = JSON.parse(raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, ''));
-  const cols = json.table.cols.map((c: any) => c.label);
-  return (json.table.rows || []).map((r: any, i: number) => {
-    const obj: any = { row_number: i + 2 };
-    r.c?.forEach((cell: any, j: number) => {
-      const raw = cell?.v ?? cell?.f ?? '';
-      obj[cols[j]] = typeof raw === 'string' && raw.startsWith('Date(') ? formatFecha(raw) : raw;
-    });
-    return obj;
-  });
-}
+import { supabase } from '@/lib/supabase';
 
 function parseNum(val: any): number {
   if (typeof val === 'number') return val;
   return parseFloat(String(val || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
 }
 
-async function fetchSheet(name: string) {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(name)}&nocache=${Date.now()}`;
-  const res = await fetch(url);
-  return parseGviz(await res.text());
+// Fecha local en formato YYYY-MM-DD (no usar toISOString: convierte a UTC
+// y desfasa el día/mes en Argentina, sobre todo cerca de medianoche o fin de mes).
+function fechaLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 interface VentaRow {
@@ -71,19 +49,20 @@ export default function HomePage() {
     async function cargar() {
       setLoading(true);
       try {
-        const rawVentas = await fetchSheet('VENTAS');
+        const { data: rawVentas, error } = await supabase.from('ventas').select('*').order('id', { ascending: false });
+        if (error) throw error;
 
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = fechaLocal(new Date());
         const mes = hoy.slice(0, 7);
 
-        const vs: VentaRow[] = rawVentas.map((r: any) => ({
-          fecha: r.FECHA || '',
-          cliente: (r.CLIENTE || '').trim(),
-          facturacion: parseNum(r.FACTURACION),
-          ganancia: parseNum(r.GANANCIA),
-          estado: r['ESTADO PEDIDO'] || '',
-          vendedor: (r.VENDEDOR || '').trim(),
-          pedido: r.PEDIDO || '',
+        const vs: VentaRow[] = (rawVentas || []).map((r: any) => ({
+          fecha: r.fecha || '',
+          cliente: (r.cliente_nombre || '').trim(),
+          facturacion: parseNum(r.facturacion),
+          ganancia: parseNum(r.ganancia),
+          estado: r.estado || '',
+          vendedor: (r.vendedor || '').trim(),
+          pedido: r.pedido || '',
         })).filter((v: VentaRow) => v.cliente && !v.cliente.startsWith('---') && !v.cliente.toUpperCase().startsWith('CIERRE'));
 
         const hoyVs = vs.filter(v => v.fecha === hoy);
@@ -101,13 +80,13 @@ export default function HomePage() {
           factPendiente: pendVs.reduce((s, v) => s + v.facturacion, 0),
         });
 
-        setUltimasVentas([...vs].reverse().slice(0, 5));
+        setUltimasVentas(vs.slice(0, 5));
 
         const last7 = [];
         for (let i = 6; i >= 0; i--) {
           const d = new Date();
           d.setDate(d.getDate() - i);
-          last7.push(d.toISOString().split('T')[0]);
+          last7.push(fechaLocal(d));
         }
         const dias = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
         const diario = last7.map(fecha => {

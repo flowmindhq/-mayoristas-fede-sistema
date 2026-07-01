@@ -1,34 +1,17 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
-const SHEET_ID = '187O6oQfinj-OtKwx2JYxiGxUljrF9gtVFm2m6b1we4s';
 const WH_NUEVO = 'https://valennn.app.n8n.cloud/webhook/nuevo-producto-fede';
 const WH_ENTRADA = 'https://valennn.app.n8n.cloud/webhook/registrar-entrada-fede';
 const WH_ELIMINAR_PROD = 'https://valennn.app.n8n.cloud/webhook/eliminar-producto-fede';
 
 interface Producto {
-  rowNum: number;
   id: string;
   nombre: string;
   stock: number;
   precio: number;
   valorTotal: number;
-}
-
-function parseGviz(raw: string) {
-  const json = JSON.parse(raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, ''));
-  const cols = json.table.cols.map((c: any) => c.label);
-  return (json.table.rows || []).map((r: any, i: number) => {
-    const obj: any = { row_number: i + 2 };
-    r.c?.forEach((cell: any, j: number) => { obj[cols[j]] = cell?.v ?? cell?.f ?? ''; });
-    return obj;
-  });
-}
-
-async function fetchSheet(name: string) {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(name)}&nocache=${Date.now()}`;
-  const res = await fetch(url);
-  return parseGviz(await res.text());
 }
 
 export default function StockPage() {
@@ -46,16 +29,19 @@ export default function StockPage() {
   async function cargar() {
     setLoading(true);
     try {
-      const raw = await fetchSheet('STOCK');
-      const prods = raw
-        .filter((r: any) => r.NOMBRE || r.nombre)
+      const { data: raw, error } = await supabase
+        .from('productos')
+        .select('codigo, nombre, stock, precio_costo')
+        .order('nombre', { ascending: true });
+      if (error) throw error;
+      const prods = (raw || [])
+        .filter((r: any) => r.nombre)
         .map((r: any) => {
-          const precio = parseFloat(String(r['PRECIO_COSTO (USD)'] || r.PRECIO_COSTO || r.precio_costo || '0').replace(/[^0-9.]/g, '')) || 0;
-          const stock = parseFloat(String(r.STOCK || r.stock || '0').replace(/[^0-9.-]/g, '')) || 0;
+          const precio = Number(r.precio_costo) || 0;
+          const stock = Number(r.stock) || 0;
           return {
-            rowNum: r.row_number,
-            id: r.CODIGO || r.codigo || '',
-            nombre: r.NOMBRE || r.nombre || '',
+            id: r.codigo || '',
+            nombre: r.nombre || '',
             stock,
             precio,
             valorTotal: stock * precio

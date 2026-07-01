@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-
-const SHEET_ID = '187O6oQfinj-OtKwx2JYxiGxUljrF9gtVFm2m6b1we4s';
+import { supabase } from '@/lib/supabase';
 
 interface Venta {
   fecha: string;
@@ -23,30 +22,6 @@ interface Cliente {
   ventas: Venta[];
 }
 
-function formatFecha(val: any): string {
-  if (!val) return '';
-  const s = String(val);
-  const m = s.match(/^Date\((\d+),(\d+),(\d+)\)$/);
-  if (m) {
-    const y = m[1], mo = String(parseInt(m[2]) + 1).padStart(2, '0'), d = String(m[3]).padStart(2, '0');
-    return `${y}-${mo}-${d}`;
-  }
-  return s;
-}
-
-function parseGviz(raw: string) {
-  const json = JSON.parse(raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, ''));
-  const cols = json.table.cols.map((c: any) => c.label);
-  return (json.table.rows || []).map((r: any, i: number) => {
-    const obj: any = { row_number: i + 2 };
-    r.c?.forEach((cell: any, j: number) => {
-      const raw = cell?.v ?? cell?.f ?? '';
-      obj[cols[j]] = typeof raw === 'string' && raw.startsWith('Date(') ? formatFecha(raw) : raw;
-    });
-    return obj;
-  });
-}
-
 export default function ClientesPage() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,25 +32,24 @@ export default function ClientesPage() {
     async function cargar() {
       setLoading(true);
       try {
-        const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=VENTAS&nocache=${Date.now()}`;
-        const res = await fetch(url);
-        const raw = parseGviz(await res.text());
+        const { data: raw, error } = await supabase.from('ventas').select('*');
+        if (error) throw error;
 
         // Agrupar ventas por cliente
         const map: Record<string, Cliente> = {};
-        raw.forEach((r: any) => {
-          const nombre = (r.CLIENTE || r.cliente || '').trim();
+        (raw || []).forEach((r: any) => {
+          const nombre = (r.cliente_nombre || '').trim();
           if (!nombre || nombre.startsWith('---') || nombre.toUpperCase().startsWith('CIERRE')) return;
 
-          const facturacion = parseFloat(String(r.FACTURACION || r.facturacion || '0').replace(/[^0-9.]/g, '')) || 0;
-          const ganancia = parseFloat(String(r.GANANCIA || r.ganancia || '0').replace(/[^0-9.]/g, '')) || 0;
-          const fecha = r.FECHA || r.fecha || '';
+          const facturacion = Number(r.facturacion) || 0;
+          const ganancia = Number(r.ganancia) || 0;
+          const fecha = r.fecha || '';
 
           if (!map[nombre]) {
             map[nombre] = {
               nombre,
-              numero: r.NUMERO || r.numero || '',
-              localidad: r.LOCALIDAD || r.localidad || '',
+              numero: r.cliente_numero || '',
+              localidad: r.localidad || '',
               totalCompras: 0,
               totalGanancia: 0,
               cantidadPedidos: 0,
@@ -91,10 +65,10 @@ export default function ClientesPage() {
           map[nombre].ventas.push({
             fecha,
             cliente: nombre,
-            pedido: r.PEDIDO || r.pedido || '',
+            pedido: r.pedido || '',
             facturacion,
             ganancia,
-            estadoPedido: r['ESTADO PEDIDO'] || r.estadoPedido || ''
+            estadoPedido: r.estado || ''
           });
         });
 
