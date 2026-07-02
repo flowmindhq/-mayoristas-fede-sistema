@@ -96,7 +96,7 @@ export default function VentasPage() {
     setLoading(true);
     try {
       const [{ data: rawVentas, error: errVentas }, { data: rawProductos, error: errProductos }] = await Promise.all([
-        supabase.from('ventas').select('*').order('fecha', { ascending: false }).order('created_at', { ascending: false }),
+        supabase.from('ventas').select('*').order('orden_ingreso', { ascending: false }),
         supabase.from('productos').select('codigo, nombre').order('nombre', { ascending: true })
       ]);
       if (errVentas) throw errVentas;
