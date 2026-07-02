@@ -25,6 +25,9 @@ export default function StockPage() {
   const [saving, setSaving] = useState(false);
   const [formNuevo, setFormNuevo] = useState({ codigo: '', nombre: '', stock: '', precio_costo: '' });
   const [formEntrada, setFormEntrada] = useState({ producto: '', cantidad: '', precio_costo: '' });
+  const [editandoStockId, setEditandoStockId] = useState<string | null>(null);
+  const [stockValue, setStockValue] = useState('');
+  const [savingStock, setSavingStock] = useState(false);
 
   async function cargar() {
     setLoading(true);
@@ -101,6 +104,35 @@ export default function StockPage() {
       setTimeout(() => cargar(), 2000);
     } catch (e) { console.error(e); }
     setSaving(false);
+  }
+
+  function abrirEditarStock(p: Producto) {
+    setEditandoStockId(p.id);
+    setStockValue(String(p.stock));
+  }
+
+  function cancelarEditarStock() {
+    setEditandoStockId(null);
+    setStockValue('');
+  }
+
+  async function guardarStock(p: Producto) {
+    const nuevoStock = parseInt(stockValue);
+    if (isNaN(nuevoStock) || nuevoStock < 0) {
+      alert('Ingresá una cantidad de stock válida');
+      return;
+    }
+    setSavingStock(true);
+    try {
+      const { error } = await supabase.from('productos').update({ stock: nuevoStock }).eq('codigo', p.id);
+      if (error) throw error;
+      setProductos(prev => prev.map(x => x.id === p.id ? { ...x, stock: nuevoStock, valorTotal: nuevoStock * x.precio } : x));
+      cancelarEditarStock();
+    } catch (e) {
+      console.error(e);
+      alert('Error al actualizar el stock');
+    }
+    setSavingStock(false);
   }
 
   async function eliminarProducto(p: Producto) {
@@ -193,11 +225,29 @@ export default function StockPage() {
                 <tr key={i}>
                   <td className="td-muted" style={{ fontFamily: 'monospace', fontSize: 12 }}>{p.id}</td>
                   <td style={{ fontWeight: 600 }}>{p.nombre}</td>
-                  <td style={{ fontWeight: 700, color: p.stock <= 0 ? 'var(--danger)' : p.stock <= umbralBajo ? 'var(--warning)' : 'var(--success)', fontSize: 16 }}>{p.stock}</td>
+                  <td style={{ fontWeight: 700, color: p.stock <= 0 ? 'var(--danger)' : p.stock <= umbralBajo ? 'var(--warning)' : 'var(--success)', fontSize: 16 }}>
+                    {editandoStockId === p.id ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          autoFocus
+                          value={stockValue}
+                          onChange={e => setStockValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') guardarStock(p); if (e.key === 'Escape') cancelarEditarStock(); }}
+                          style={{ width: 72, fontSize: 14, fontWeight: 700 }}
+                        />
+                        <button className="btn btn-ghost" style={{ padding: '4px 6px' }} disabled={savingStock} onClick={() => guardarStock(p)} title="Guardar">✓</button>
+                        <button className="btn btn-ghost" style={{ padding: '4px 6px' }} disabled={savingStock} onClick={cancelarEditarStock} title="Cancelar">✕</button>
+                      </div>
+                    ) : p.stock}
+                  </td>
                   <td className="td-muted">${p.precio.toFixed(2)}</td>
                   <td className="td-money">${p.valorTotal.toFixed(2)}</td>
                   <td>{estadoBadge(p.stock)}</td>
-                  <td>
+                  <td style={{ display: 'flex', gap: 4 }}>
+                    <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={() => abrirEditarStock(p)} title="Editar stock">✏️</button>
                     <button className="btn btn-ghost" style={{ color: 'var(--danger)', padding: '4px 8px' }} onClick={() => eliminarProducto(p)} title="Eliminar">🗑</button>
                   </td>
                 </tr>
