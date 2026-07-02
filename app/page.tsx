@@ -49,7 +49,7 @@ export default function HomePage() {
     async function cargar() {
       setLoading(true);
       try {
-        const { data: rawVentas, error } = await supabase.from('ventas').select('*').order('id', { ascending: false });
+        const { data: rawVentas, error } = await supabase.from('ventas').select('*').order('fecha', { ascending: false }).order('created_at', { ascending: false });
         if (error) throw error;
 
         const hoy = fechaLocal(new Date());

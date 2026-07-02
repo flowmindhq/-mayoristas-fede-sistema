@@ -37,8 +37,16 @@ begin
 end;
 $$;
 
+-- editar_venta y eliminar_venta declaraban p_id como bigint, pero ventas.id
+-- es uuid: toda llamada fallaba con "operator does not exist: uuid = bigint"
+-- (PUT y DELETE de /api/ventas/[id] rotos). Al cambiar el tipo del parámetro
+-- hay que DROP la versión vieja: create or replace no reemplaza una función
+-- si difiere la firma de argumentos, solo crearía un overload nuevo.
+drop function if exists editar_venta(bigint, date, text, text, text, text, numeric, numeric, text, text, jsonb, jsonb);
+drop function if exists eliminar_venta(bigint, jsonb);
+
 create or replace function editar_venta(
-  p_id bigint,
+  p_id uuid,
   p_fecha date,
   p_cliente_nombre text,
   p_cliente_numero text,
@@ -95,7 +103,7 @@ end;
 $$;
 
 create or replace function eliminar_venta(
-  p_id bigint,
+  p_id uuid,
   p_items jsonb
 ) returns void
 language plpgsql
