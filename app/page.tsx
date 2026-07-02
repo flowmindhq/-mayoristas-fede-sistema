@@ -49,7 +49,7 @@ export default function HomePage() {
     async function cargar() {
       setLoading(true);
       try {
-        const { data: rawVentas, error } = await supabase.from('ventas').select('*').order('orden_ingreso', { ascending: false });
+        const { data: rawVentas, error } = await supabase.from('ventas').select('*').order('orden_ingreso', { ascending: true });
         if (error) throw error;
 
         const hoy = fechaLocal(new Date());
@@ -80,7 +80,7 @@ export default function HomePage() {
           factPendiente: pendVs.reduce((s, v) => s + v.facturacion, 0),
         });
 
-        setUltimasVentas(vs.slice(0, 5));
+        setUltimasVentas(vs.slice(-5).reverse());
 
         const last7 = [];
         for (let i = 6; i >= 0; i--) {
