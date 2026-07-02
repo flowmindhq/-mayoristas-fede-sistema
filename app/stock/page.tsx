@@ -2,16 +2,18 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
-const WH_NUEVO = 'https://valennn.app.n8n.cloud/webhook/nuevo-producto-fede';
-const WH_ENTRADA = 'https://valennn.app.n8n.cloud/webhook/registrar-entrada-fede';
-const WH_ELIMINAR_PROD = 'https://valennn.app.n8n.cloud/webhook/eliminar-producto-fede';
-
 interface Producto {
   id: string;
   nombre: string;
   stock: number;
   precio: number;
   valorTotal: number;
+}
+
+interface Toast {
+  id: number;
+  msg: string;
+  type: 'ok' | 'err' | 'info';
 }
 
 export default function StockPage() {
@@ -28,6 +30,13 @@ export default function StockPage() {
   const [editandoStockId, setEditandoStockId] = useState<string | null>(null);
   const [stockValue, setStockValue] = useState('');
   const [savingStock, setSavingStock] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  function toast(msg: string, type: 'ok' | 'err' | 'info' = 'info') {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  }
 
   async function cargar() {
     setLoading(true);
@@ -78,15 +87,18 @@ export default function StockPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      await fetch(WH_NUEVO, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo: 'nuevo_producto', ...formNuevo })
+      const { error } = await supabase.from('productos').insert({
+        codigo: formNuevo.codigo,
+        nombre: formNuevo.nombre,
+        stock: parseInt(formNuevo.stock) || 0,
+        precio_costo: parseFloat(formNuevo.precio_costo) || 0
       });
+      if (error) throw error;
+      toast('Producto agregado ✓', 'ok');
       setShowNuevo(false);
       setFormNuevo({ codigo: '', nombre: '', stock: '', precio_costo: '' });
-      setTimeout(() => cargar(), 2000);
-    } catch (e) { console.error(e); }
+      cargar();
+    } catch (e) { console.error(e); toast('Error al agregar el producto', 'err'); }
     setSaving(false);
   }
 
@@ -94,15 +106,18 @@ export default function StockPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      await fetch(WH_ENTRADA, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo: 'entrada_stock', ...formEntrada })
-      });
+      const actual = productos.find(p => p.nombre === formEntrada.producto);
+      if (!actual) throw new Error('Producto no encontrado');
+      const cantidad = parseInt(formEntrada.cantidad) || 0;
+      const update: { stock: number; precio_costo?: number } = { stock: actual.stock + cantidad };
+      if (formEntrada.precio_costo) update.precio_costo = parseFloat(formEntrada.precio_costo) || actual.precio;
+      const { error } = await supabase.from('productos').update(update).eq('codigo', actual.id);
+      if (error) throw error;
+      toast('Entrada registrada ✓', 'ok');
       setShowEntrada(false);
       setFormEntrada({ producto: '', cantidad: '', precio_costo: '' });
-      setTimeout(() => cargar(), 2000);
-    } catch (e) { console.error(e); }
+      cargar();
+    } catch (e) { console.error(e); toast('Error al registrar la entrada', 'err'); }
     setSaving(false);
   }
 
@@ -119,7 +134,7 @@ export default function StockPage() {
   async function guardarStock(p: Producto) {
     const nuevoStock = parseInt(stockValue);
     if (isNaN(nuevoStock) || nuevoStock < 0) {
-      alert('Ingresá una cantidad de stock válida');
+      toast('Ingresá una cantidad de stock válida', 'err');
       return;
     }
     setSavingStock(true);
@@ -127,10 +142,11 @@ export default function StockPage() {
       const { error } = await supabase.from('productos').update({ stock: nuevoStock }).eq('codigo', p.id);
       if (error) throw error;
       setProductos(prev => prev.map(x => x.id === p.id ? { ...x, stock: nuevoStock, valorTotal: nuevoStock * x.precio } : x));
+      toast('Stock actualizado ✓', 'ok');
       cancelarEditarStock();
     } catch (e) {
       console.error(e);
-      alert('Error al actualizar el stock');
+      toast('Error al actualizar el stock', 'err');
     }
     setSavingStock(false);
   }
@@ -138,18 +154,26 @@ export default function StockPage() {
   async function eliminarProducto(p: Producto) {
     if (!confirm(`¿Eliminar ${p.nombre} del stock?`)) return;
     try {
-      await fetch(WH_ELIMINAR_PROD, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codigo: p.id })
-      });
+      const { error } = await supabase.from('productos').delete().eq('codigo', p.id);
+      if (error) throw error;
+      toast('Producto eliminado ✓', 'ok');
       setProductos(prev => prev.filter(x => x.id !== p.id));
-      setTimeout(() => cargar(), 3000);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); toast('Error al eliminar el producto', 'err'); }
   }
+
+  const toastColors: Record<string, string> = { ok: '#22c55e', err: '#ef4444', info: '#3b82f6' };
 
   return (
     <>
+      {/* Toasts */}
+      <div style={{ position: 'fixed', bottom: 24, right: 24, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999 }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{ background: 'var(--surface)', border: `1px solid ${toastColors[t.type]}`, borderLeft: `4px solid ${toastColors[t.type]}`, borderRadius: 8, padding: '10px 16px', fontSize: 13, fontWeight: 500, color: 'var(--text)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: 220 }}>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+
       <div className="topbar">
         <div className="topbar-title">Stock</div>
         <div className="topbar-right">
