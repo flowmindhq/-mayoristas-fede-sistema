@@ -25,6 +25,12 @@ interface Cuenta {
   descripcion: string;
 }
 
+interface Toast {
+  id: number;
+  msg: string;
+  type: 'ok' | 'err' | 'info';
+}
+
 interface VentaRow {
   fecha: string;
   facturacion: number;
@@ -48,6 +54,13 @@ export default function FinanzasPage() {
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
   const [showCuentaModal, setShowCuentaModal] = useState(false);
   const [cuentaForm, setCuentaForm] = useState({ nombre: '', monto: '', tipo: 'deben' as 'deben' | 'debo', descripcion: '' });
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  function toast(msg: string, type: 'ok' | 'err' | 'info' = 'info') {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  }
 
   useEffect(() => {
     async function cargar() {
@@ -146,39 +159,79 @@ export default function FinanzasPage() {
       setLoading(false);
     }
     cargar();
-
-    const saved = localStorage.getItem('flowmind_cuentas');
-    if (saved) setCuentas(JSON.parse(saved));
+    cargarCuentas();
   }, []);
 
-  function guardarCuenta(e: React.FormEvent) {
-    e.preventDefault();
-    const nueva: Cuenta = {
-      id: Date.now().toString(),
-      nombre: cuentaForm.nombre,
-      monto: parseFloat(cuentaForm.monto) || 0,
-      tipo: cuentaForm.tipo,
-      descripcion: cuentaForm.descripcion,
-    };
-    const nuevas = [...cuentas, nueva];
-    setCuentas(nuevas);
-    localStorage.setItem('flowmind_cuentas', JSON.stringify(nuevas));
-    setShowCuentaModal(false);
-    setCuentaForm({ nombre: '', monto: '', tipo: 'deben', descripcion: '' });
+  async function cargarCuentas() {
+    try {
+      const { data, error } = await supabase
+        .from('cuentas_corrientes')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setCuentas((data || []).map((r: any) => ({
+        id: r.id,
+        nombre: r.nombre || '',
+        monto: parseNum(r.monto),
+        tipo: r.tipo === 'debo' ? 'debo' : 'deben',
+        descripcion: r.descripcion || '',
+      })));
+    } catch (e) { console.error(e); }
   }
 
-  function eliminarCuenta(id: string) {
-    const nuevas = cuentas.filter(c => c.id !== id);
-    setCuentas(nuevas);
-    localStorage.setItem('flowmind_cuentas', JSON.stringify(nuevas));
+  async function guardarCuenta(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      const { data, error } = await supabase
+        .from('cuentas_corrientes')
+        .insert({
+          nombre: cuentaForm.nombre,
+          monto: parseFloat(cuentaForm.monto) || 0,
+          tipo: cuentaForm.tipo,
+          descripcion: cuentaForm.descripcion,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      setCuentas(prev => [...prev, {
+        id: data.id,
+        nombre: data.nombre || '',
+        monto: parseNum(data.monto),
+        tipo: data.tipo === 'debo' ? 'debo' : 'deben',
+        descripcion: data.descripcion || '',
+      }]);
+      setShowCuentaModal(false);
+      setCuentaForm({ nombre: '', monto: '', tipo: 'deben', descripcion: '' });
+      toast('Cuenta guardada ✓', 'ok');
+    } catch (e) { console.error(e); toast('Error al guardar la cuenta', 'err'); }
+  }
+
+  async function eliminarCuenta(id: string) {
+    try {
+      const { error } = await supabase.from('cuentas_corrientes').delete().eq('id', id);
+      if (error) throw error;
+      setCuentas(prev => prev.filter(c => c.id !== id));
+      toast('Cuenta eliminada ✓', 'ok');
+    } catch (e) { console.error(e); toast('Error al eliminar la cuenta', 'err'); }
   }
 
   const fmt = (n: number) => '$' + n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const teDeben = cuentas.filter(c => c.tipo === 'deben').reduce((s, c) => s + c.monto, 0);
   const debo = cuentas.filter(c => c.tipo === 'debo').reduce((s, c) => s + c.monto, 0);
 
+  const toastColors: Record<string, string> = { ok: '#22c55e', err: '#ef4444', info: '#3b82f6' };
+
   return (
     <>
+      {/* Toasts */}
+      <div style={{ position: 'fixed', bottom: 24, right: 24, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999 }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{ background: 'var(--surface)', border: `1px solid ${toastColors[t.type]}`, borderLeft: `4px solid ${toastColors[t.type]}`, borderRadius: 8, padding: '10px 16px', fontSize: 13, fontWeight: 500, color: 'var(--text)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: 220 }}>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+
       <div className="topbar">
         <div className="topbar-title">Finanzas</div>
         <div className="topbar-right">
